@@ -823,6 +823,9 @@ private:
 	const ExtDoc_t *	m_pDoc1 {nullptr};		///< current in-chunk ptr
 	const ExtDoc_t *	m_pDoc2 {nullptr};		///< current in-chunk ptr
 	const ExtDoc_t *	m_pDotDoc {nullptr};	///< current in-chunk ptr
+	const ExtHit_t *	m_pHit1 {nullptr};		///< current in-chunk ptr
+	const ExtHit_t *	m_pHit2 {nullptr};		///< current in-chunk ptr
+	const ExtHit_t *	m_pDotHit {nullptr};	///< current in-chunk ptr
 };
 
 
@@ -2589,6 +2592,13 @@ const ExtDoc_t * ExtAnd_c::GetDocsChunk()
 }
 
 
+static inline bool IsHitLess ( const ExtHit_t * pHit1, const ExtHit_t * pHit2 )
+{
+	assert ( pHit1 && pHit2 );
+	return ( pHit1->m_uHitpos<pHit2->m_uHitpos ) || ( pHit1->m_uHitpos==pHit2->m_uHitpos && pHit1->m_uQuerypos<=pHit2->m_uQuerypos );
+}
+
+
 struct CmpAndHitReverse_fn
 {
 	inline bool IsLess ( const ExtHit_t & a, const ExtHit_t & b ) const
@@ -2640,7 +2650,7 @@ void ExtAnd_c::CollectHits ( const ExtDoc_t * pDocs )
 		{
 			tMatchedRowID = pCurL->m_tRowID;
 
-			if ( ( pCurL->m_uHitpos<pCurR->m_uHitpos ) || ( pCurL->m_uHitpos==pCurR->m_uHitpos && pCurL->m_uQuerypos<=pCurR->m_uQuerypos ) )
+			if ( IsHitLess ( pCurL, pCurR ) )
 			{
 				m_dHits.Add ( *pCurL++ );
 				bLeft = true;
@@ -3384,7 +3394,7 @@ void ExtAndZonespanned_c::CollectHits ( const ExtDoc_t * pDocs )
 			pCurR++;
 		else
 		{
-			if ( ( pCurL->m_uHitpos<pCurR->m_uHitpos ) || ( pCurL->m_uHitpos==pCurR->m_uHitpos && pCurL->m_uQuerypos<=pCurR->m_uQuerypos ) )
+			if ( IsHitLess ( pCurL, pCurR ) )
 			{
 				if ( IsSameZonespan ( pCurL, pCurR ) )
 				{
@@ -3493,7 +3503,7 @@ void ExtOr_c::CollectHits ( const ExtDoc_t * pDocs )
 			m_dHits.Add ( *pCurR++ );
 		else
 		{
-			if ( ( pCurL->m_uHitpos<pCurR->m_uHitpos ) || ( pCurL->m_uHitpos==pCurR->m_uHitpos && pCurL->m_uQuerypos<=pCurR->m_uQuerypos ) )
+			if ( IsHitLess ( pCurL, pCurR ) )
 				m_dHits.Add ( *pCurL++ );
 			else
 				m_dHits.Add ( *pCurR++ );
@@ -5073,7 +5083,7 @@ void ExtUnit_c::FilterHits ( const ExtDoc_t * pDoc1, const ExtDoc_t * pDoc2, con
 				bRegistered = true; // just once
 			}
 
-			if ( bValid1 && ( !bValid2 || pHit1->m_uHitpos < pHit2->m_uHitpos ) )	
+			if ( bValid1 && ( !bValid2 || IsHitLess ( pHit1, pHit2 ) ) )
 				m_dMyHits.Add ( *pHit1++ );
 			else
 				m_dMyHits.Add ( *pHit2++ );
@@ -5142,9 +5152,9 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 	// only those left/right pairs that are not (!) separated by a dot should match
 
 	int iDoc = 0;
-	const ExtHit_t * pHit1 = nullptr;
-	const ExtHit_t * pHit2 = nullptr;
-	const ExtHit_t * pDotHit = nullptr;
+	const ExtHit_t * pHit1 = m_pHit1;
+	const ExtHit_t * pHit2 = m_pHit2;
+	const ExtHit_t * pDotHit = m_pDotHit;
 	const ExtDoc_t * pDoc1 = m_pDoc1;
 	const ExtDoc_t * pDoc2 = m_pDoc2;
 	const ExtDoc_t * pDotDoc = m_pDotDoc;
@@ -5152,11 +5162,14 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 	bool bNeedDoc1Hits = false;
 	bool bNeedDoc2Hits = false;
 	bool bNeedDotHits = false;
-	while ( true )
+	while ( iDoc<MAX_BLOCK_DOCS-1 )
 	{
 		// fetch more candidate docs, if needed
 		if ( !HasDocs(pDoc1) )
 		{
+			if ( HasDocs(pDoc2)  )
+				m_pArg1->HintRowID ( pDoc2->m_tRowID );
+
 			pDoc1 = m_pArg1->GetDocsChunk();
 			if ( !HasDocs(pDoc1) )
 				break;
@@ -5166,6 +5179,9 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 
 		if ( !HasDocs(pDoc2) )
 		{
+			if ( HasDocs(pDoc1)  )
+				m_pArg2->HintRowID ( pDoc1->m_tRowID );
+
 			pDoc2 = m_pArg2->GetDocsChunk();
 			if ( !HasDocs(pDoc2) )
 				break;
@@ -5191,6 +5207,7 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 		// note how NULL is accepted here, "A and B but no dots" case is valid!
 		if ( !HasDocs(pDotDoc) )
 		{
+			m_pDot->HintRowID(tRowID);
 			pDotDoc = m_pDotDocs = m_pDot->GetDocsChunk();
 			bNeedDotHits = true;
 		}
@@ -5262,6 +5279,9 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 	m_pDoc1 = pDoc1;
 	m_pDoc2 = pDoc2;
 	m_pDotDoc = pDotDoc;
+	m_pHit1 = pHit1;
+	m_pHit2 = pHit2;
+	m_pDotHit = pDotHit;
 
 	return ReturnDocsChunk ( iDoc, "unit" );
 }
